@@ -108,11 +108,11 @@ function LockScreen:paintTo(bb, x, y)
     local line = math.max(1, Screen:scaleBySize(0.75))
 
     local short = math.min(w, h)
-    local cell_w = math.floor(short * 0.16)
-    local gap = math.floor(short * 0.018)
-    local cell_h = math.floor(h * 0.068)
+    local cell_w = math.floor(short * 0.135)
+    local gap = math.floor(short * 0.01)
+    local cell_h = math.floor(h * 0.085)
     local grid_w = 3 * cell_w + 2 * gap
-    local header_h = math.floor(cell_h * 1.45)
+    local header_h = math.floor(cell_h * 1.15)
     local group_h = header_h + 4 * cell_h
     local gx = x + math.floor((w - grid_w) / 2)
     local gy = y + math.floor(h * 0.47 - group_h / 2)
@@ -132,10 +132,10 @@ function LockScreen:paintTo(bb, x, y)
             fgcolor = black,
         }, cx, header_cy)
     else
-        local dot_r = math.max(3, math.floor(cell_h * 0.07))
-        local dot_gap = math.floor(dot_r * 4.2)
-        local dots_cx = gx + math.floor((2 * cell_w + gap) / 2)
-        local first = dots_cx - math.floor((self.length - 1) * dot_gap / 2)
+        -- Dots start right above the "1"; the backspace sits above the "3".
+        local dot_r = math.max(4, math.floor(short * 0.011))
+        local dot_gap = math.floor(dot_r * 3.6)
+        local first = gx + math.floor(cell_w / 2)
         for i = 1, self.length do
             local dx = first + (i - 1) * dot_gap
             if i <= #self.input then
@@ -189,6 +189,14 @@ function LockScreen:paintTo(bb, x, y)
     end
 end
 
+--- Partial refresh, or a flashing one when the header swapped prompt ⇄ dots: e-ink keeps
+-- a faint ghost of the previous content after a plain partial update.
+function LockScreen:refresh()
+    local mode = self.header_changed and "flashui" or "ui"
+    self.header_changed = false
+    UIManager:setDirty(self, mode)
+end
+
 function LockScreen:keyAt(pos)
     for _i, key in ipairs(self.keys) do
         if pos.x >= key.x and pos.x < key.x + key.w and pos.y >= key.y and pos.y < key.y + key.h then
@@ -203,15 +211,17 @@ function LockScreen:press(label)
         return
     elseif label == "⌫" then
         self.input = self.input:sub(1, -2)
+        if #self.input == 0 then self.header_changed = true end
     elseif label == "Huỷ" then
         UIManager:close(self)
         if self.on_cancel then self.on_cancel() end
         return
     elseif #self.input < self.length then
+        if #self.input == 0 then self.header_changed = true end
         self.input = self.input .. label
         self.message = nil
     end
-    UIManager:setDirty(self, "ui")
+    self:refresh()
 
     if #self.input == self.length and self.on_complete then
         local pin = self.input
@@ -223,7 +233,8 @@ function LockScreen:press(label)
             else
                 self.input = ""
                 self.message = type(result) == "string" and result or "Sai mã PIN. Vui lòng thử lại."
-                UIManager:setDirty(self, "ui")
+                self.header_changed = true
+                self:refresh()
             end
         end)
     end
