@@ -20,22 +20,15 @@ points it at the same server and account.
 @module koplugin.Bellasekai
 --]]
 
-local Blitbuffer = require("ffi/blitbuffer")
 local BookList = require("ui/widget/booklist")
 local ButtonDialog = require("ui/widget/buttondialog")
 local DataStorage = require("datastorage")
 local Device = require("device")
+local Dispatcher = require("dispatcher")
 local DocSettings = require("docsettings")
 local FileManager = require("apps/filemanager/filemanager")
-local Font = require("ui/font")
-local Geom = require("ui/geometry")
-local GestureRange = require("ui/gesturerange")
-local HorizontalGroup = require("ui/widget/horizontalgroup")
-local HorizontalSpan = require("ui/widget/horizontalspan")
 local InfoMessage = require("ui/widget/infomessage")
-local InputContainer = require("ui/widget/container/inputcontainer")
 local JSON = require("json")
-local LeftContainer = require("ui/widget/container/leftcontainer")
 local LuaSettings = require("luasettings")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
 local NetworkMgr = require("ui/network/manager")
@@ -43,12 +36,8 @@ local PathChooser = require("ui/widget/pathchooser")
 local PluginLoader = require("pluginloader")
 local ReadCollection = require("readcollection")
 local ReadHistory = require("readhistory")
-local Size = require("ui/size")
-local TextWidget = require("ui/widget/textwidget")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
-local VerticalGroup = require("ui/widget/verticalgroup")
-local VerticalSpan = require("ui/widget/verticalspan")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local http = require("socket.http")
 local lfs = require("libs/libkoreader-lfs")
@@ -62,9 +51,6 @@ local T = require("ffi/util").template
 
 -- Matches CHECKSUM_METHOD.FILENAME in kosync.koplugin.
 local KOSYNC_CHECKSUM_FILENAME = 1
-
--- Id of the ZenOS Home widget; ZenOS stores layout and enabled state under it.
-local ZEN_WIDGET_ID = "bellasekai.library"
 
 local BRAND = "Bindery"
 
@@ -100,105 +86,36 @@ function Bellasekai:init()
     end
     self.settings = Bellasekai.shared_settings
     self.ui.menu:registerToMainMenu(self)
-    self:registerZenWidget()
+    self:onDispatcherRegisterActions()
 end
 
---- Plugins load in path order, so ZenOS may not be up yet during init.
-function Bellasekai:onZenOSReady()
-    self:registerZenWidget()
-end
-
---- Adds (or refreshes) the Bellasekai widget on the ZenOS Home page.
--- Registering an existing id replaces its builder and makes ZenOS rebuild Home, which
--- is how the widget picks up a finished sync. Without ZenOS this does nothing.
-function Bellasekai:registerZenWidget()
-    local register = rawget(_G, "__ZENOS_REGISTER_HOME_ITEM")
-    if type(register) ~= "function" then return end
-    register(ZEN_WIDGET_ID, function(ctx) return self:buildZenWidget(ctx) end, {
-        label = BRAND,
-        size = "xs",
+--- "Bindery" as a dispatcher action: a ZenOS Navbar tab (Add > Action), a gesture or a
+-- Controls button can open the book list with it.
+function Bellasekai:onDispatcherRegisterActions()
+    Dispatcher:registerAction("bindery_show_library", {
+        category = "none",
+        event = "BinderyShowLibrary",
+        title = BRAND,
+        general = true,
     })
 end
 
-function Bellasekai:zenStatusText()
-    if not self:isConfigured() then
-        return _("Not set up · tap to configure")
-    end
-    local count = 0
-    for _id in pairs(self.settings:readSetting("books") or {}) do
-        count = count + 1
-    end
+function Bellasekai:onBinderyShowLibrary()
+    self:showLibraryDialog()
+    return true
+end
+
+--- "Synced 23:05 04/10" (plus failures), or why there is nothing to show yet.
+function Bellasekai:syncedText()
     local last = self.settings:readSetting("last_sync")
     if not last then
-        return T(_("%1 books · never synced"), count)
+        return _("Never synced")
     end
-    local text = T(_("%1 books · synced %2"), count, os.date("%H:%M %d/%m", last.time))
+    local text = T(_("Synced %1"), os.date("%H:%M %d/%m", last.time))
     if (last.failed or 0) > 0 then
         text = text .. " · " .. T(_("%1 failed"), last.failed)
     end
     return text
-end
-
-function Bellasekai:buildZenWidget(ctx)
-    local Screen = Device.screen
-    local width, height = ctx.width, ctx.height
-    local pad = Size.padding.large
-    local inner_w = math.max(1, width - 2 * pad)
-    local title = BRAND
-
-    local text = VerticalGroup:new{
-        align = "left",
-        TextWidget:new{
-            text = title,
-            face = ctx.face_value or Font:getFace("smallinfofont", Screen:scaleBySize(20)),
-            bold = true,
-            max_width = inner_w,
-            fgcolor = Blitbuffer.COLOR_BLACK,
-        },
-        VerticalSpan:new{ width = Size.span.vertical_default },
-        TextWidget:new{
-            text = self:zenStatusText(),
-            face = ctx.face_label or Font:getFace("smallinfofont", Screen:scaleBySize(16)),
-            max_width = inner_w,
-            fgcolor = Blitbuffer.COLOR_BLACK,
-        },
-    }
-
-    -- No background of its own: ZenOS paints the Home background behind every widget.
-    local tap = InputContainer:new{
-        dimen = Geom:new{ w = width, h = height },
-        ges_events = {
-            TapBellasekai = {
-                GestureRange:new{ ges = "tap", range = Geom:new{
-                    x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight(),
-                } },
-            },
-        },
-        HorizontalGroup:new{
-            HorizontalSpan:new{ width = pad },
-            LeftContainer:new{
-                dimen = Geom:new{ w = inner_w, h = height },
-                text,
-            },
-        },
-    }
-    tap.onTapBellasekai = function(tap_self, _arg, ges)
-        if not (tap_self.dimen and ges and ges.pos and tap_self.dimen:contains(ges.pos)) then
-            return false
-        end
-        if ctx.openTopMenu and ctx.openTopMenu(ges) then return true end
-        self:showLibraryDialog()
-        return true
-    end
-    if type(ctx.setWidgetActions) == "function" then
-        ctx.setWidgetActions{
-            activate = function()
-                self:showLibraryDialog()
-                return true
-            end,
-        }
-    end
-    return tap
 end
 
 --- Books of the collection that are on the device, alphabetically.
@@ -255,7 +172,13 @@ function Bellasekai:showLibraryDialog()
     if not picker then
         return self:showLibraryButtons()
     end
-    local items = {}
+    local configured = self:isConfigured()
+    local items = {{
+        text = self:syncedText(),
+        secondary_text = configured and _("Tap to sync now") or _("Set up the account in Settings"),
+        image_file = self:icon("refresh-cw"),
+        sync = true,
+    }}
     for _i, book in ipairs(self:localBooks()) do
         local entry, detail = self:bookStatus(book)
         table.insert(items, {
@@ -265,9 +188,9 @@ function Bellasekai:showLibraryDialog()
             file = book.file,
         })
     end
-    if #items == 0 then
+    if #items == 1 then
         table.insert(items, {
-            text = self:isConfigured() and _("No books yet") or _("Not set up"),
+            text = configured and _("No books yet") or _("Not set up"),
             secondary_text = _("Tap the gear to open Settings and sync"),
             image_file = self:icon("library"),
             keep_open = true,
@@ -279,7 +202,11 @@ function Bellasekai:showLibraryDialog()
         title_action_icon = self:icon("settings"),
         title_action_callback = function() self:showSettingsDialog() end,
         on_select = function(item)
-            if item.file then self:openBook(item.file) end
+            if item.sync then
+                self:runSettingsEntry(self:settingsEntries()[1])
+            elseif item.file then
+                self:openBook(item.file)
+            end
         end,
     }
 end
@@ -370,7 +297,14 @@ end
 --- Fallback without ZenOS: the same content as plain dialogs with inline glyphs.
 function Bellasekai:showLibraryButtons()
     local dialog
-    local buttons = {}
+    local buttons = {{{
+        text = ICONS.sync .. "  " .. self:syncedText(),
+        align = "left",
+        callback = function()
+            UIManager:close(dialog)
+            self:runSettingsEntry(self:settingsEntries()[1])
+        end,
+    }}}
     local books = self:localBooks()
     for _i, book in ipairs(books) do
         local entry, detail = self:bookStatus(book)
@@ -789,7 +723,6 @@ function Bellasekai:sync()
     })
     self.settings:flush()
     Trapper:clear()
-    self:registerZenWidget()
 
     if FileManager.instance then
         FileManager.instance:onRefresh()
