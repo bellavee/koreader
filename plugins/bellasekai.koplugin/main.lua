@@ -131,10 +131,10 @@ function Bellasekai:localBooks()
 end
 
 local BOOK_STATUS = {
-    new       = { icon = "book.opened",      glyph = ICONS.unread,   label = _("Unread") },
-    reading   = { icon = "dogear.reading",   glyph = ICONS.reading,  label = _("Reading") },
-    complete  = { icon = "check",            glyph = ICONS.finished, label = _("Finished") },
-    abandoned = { icon = "dogear.abandoned", glyph = ICONS.on_hold,  label = _("On hold") },
+    new       = { glyph = ICONS.unread,   label = _("Unread") },
+    reading   = { glyph = ICONS.reading,  label = _("Reading") },
+    complete  = { glyph = ICONS.finished, label = _("Finished") },
+    abandoned = { glyph = ICONS.on_hold,  label = _("On hold") },
 }
 
 --- Read status of a book, as an icon and a "Reading · 42%" line.
@@ -153,12 +153,9 @@ function Bellasekai:openBook(file)
     require("apps/reader/readerui"):showReader(file)
 end
 
---- KOReader's bundled icons. Third-party SVGs with fill="none" rendered as solid black
--- shapes on the device; these are drawn for KOReader's own renderer.
-local function koIcon(name)
-    return "resources/icons/mdlight/" .. name .. ".svg"
-end
-local SETTINGS_ICON = koIcon("appbar.settings")
+--- KOReader's gear for the Settings button. List rows stay text-only: SVG icons drawn
+-- as list images in the ZenOS picker came out as solid black shapes on the device.
+local SETTINGS_ICON = "resources/icons/mdlight/appbar.settings.svg"
 
 --- ZenOS' full-screen list: title bar with a back arrow and an action button, rows
 -- with an icon and a detail line. nil without ZenOS, and callers fall back to dialogs.
@@ -178,7 +175,6 @@ function Bellasekai:showLibraryDialog()
     local items = {{
         text = self:syncedText(),
         secondary_text = configured and _("Tap to sync now") or _("Set up the account in Settings"),
-        image_file = koIcon("cre.render.reload"),
         sync = true,
     }}
     for _i, book in ipairs(self:localBooks()) do
@@ -186,7 +182,6 @@ function Bellasekai:showLibraryDialog()
         table.insert(items, {
             text = book.title,
             secondary_text = detail,
-            image_file = koIcon(entry.icon),
             file = book.file,
         })
     end
@@ -194,7 +189,6 @@ function Bellasekai:showLibraryDialog()
         table.insert(items, {
             text = configured and _("No books yet") or _("Not set up"),
             secondary_text = _("Tap the gear to open Settings and sync"),
-            image_file = koIcon("notice-info"),
             keep_open = true,
         })
     end
@@ -220,14 +214,14 @@ function Bellasekai:settingsEntries()
     local server = self:getServer()
     return {
         {
-            icon = "cre.render.reload", glyph = ICONS.sync,
+            glyph = ICONS.sync,
             text = _("Sync library"),
             detail = last and T(_("Last sync %1"), os.date("%H:%M %d/%m", last.time)) or _("Never synced"),
             enabled = configured,
             action = function() self:startSync() end,
         },
         {
-            icon = "edit", glyph = ICONS.account,
+            glyph = ICONS.account,
             text = _("Server and account"),
             detail = configured
                 and (self.settings:readSetting("username") .. " · " .. server:gsub("^https?://", ""))
@@ -235,7 +229,7 @@ function Bellasekai:settingsEntries()
             action = function() self:showAccountDialog() end,
         },
         {
-            icon = "appbar.filebrowser", glyph = ICONS.folder,
+            glyph = ICONS.folder,
             text = _("Download folder"),
             detail = self:getDownloadDir(),
             action = function()
@@ -243,7 +237,7 @@ function Bellasekai:settingsEntries()
             end,
         },
         {
-            icon = "close", glyph = ICONS.delete,
+            glyph = ICONS.delete,
             text = _("Delete books removed from the collection"),
             detail = self.settings:nilOrTrue("delete_removed") and _("On") or _("Off"),
             action = function()
@@ -253,7 +247,7 @@ function Bellasekai:settingsEntries()
             end,
         },
         {
-            icon = "wifi", glyph = ICONS.connect,
+            glyph = ICONS.connect,
             text = _("Apply to Progress sync"),
             detail = configured and (server .. "/api/kosync") or _("Set up the account first"),
             enabled = configured,
@@ -281,7 +275,6 @@ function Bellasekai:showSettingsDialog()
         table.insert(items, {
             text = entry.text,
             secondary_text = entry.detail,
-            image_file = koIcon(entry.icon),
             entry = entry,
         })
     end
