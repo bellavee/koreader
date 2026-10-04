@@ -68,8 +68,8 @@ local ZEN_WIDGET_ID = "bellasekai.library"
 
 local BRAND = "Bindery"
 
--- Material Design glyphs from the Nerd Font symbols, as used by ZenOS menus. KOReader
--- ships the same font as a UI fallback, so they render without ZenOS too.
+-- Material Design glyphs from the Nerd Font symbols, used by the fallback dialogs when
+-- ZenOS (and its full-size SVG rows) is not installed.
 local ICONS = {
     settings = "\u{F0493}",
     sync     = "\u{F04E6}",
@@ -84,12 +84,6 @@ local ICONS = {
     check    = "\u{2713}",
 }
 
-local STATUS_ICONS = {
-    new = ICONS.unread,
-    reading = ICONS.reading,
-    complete = ICONS.finished,
-    abandoned = ICONS.on_hold,
-}
 
 local Bellasekai = WidgetContainer:extend{
     name = "bellasekai",
@@ -219,28 +213,169 @@ function Bellasekai:localBooks()
     return books
 end
 
-function Bellasekai:bookRowText(book)
+local BOOK_STATUS = {
+    new       = { icon = "book",         glyph = ICONS.unread,   label = _("Unread") },
+    reading   = { icon = "book-open",    glyph = ICONS.reading,  label = _("Reading") },
+    complete  = { icon = "circle-check", glyph = ICONS.finished, label = _("Finished") },
+    abandoned = { icon = "circle-pause", glyph = ICONS.on_hold,  label = _("On hold") },
+}
+
+--- Read status of a book, as an icon and a "Reading · 42%" line.
+function Bellasekai:bookStatus(book)
     local info = BookList.getBookInfo(book.file)
     local status = info.been_opened and info.status or "new"
-    local text = (STATUS_ICONS[status] or ICONS.unread) .. "  " .. book.title
+    local entry = BOOK_STATUS[status] or BOOK_STATUS.new
+    local detail = entry.label
     if status ~= "complete" and info.percent_finished then
-        text = text .. "  ·  " .. math.floor(info.percent_finished * 100) .. "%"
+        detail = detail .. " · " .. math.floor(info.percent_finished * 100) .. "%"
     end
-    return text
+    return entry, detail
 end
 
 function Bellasekai:openBook(file)
     require("apps/reader/readerui"):showReader(file)
 end
 
---- What the Home widget opens: the books in the download folder, then Settings.
+--- Icon shipped with the plugin (Lucide, ISC licence — see icons/LICENSE).
+function Bellasekai:icon(name)
+    return self.path .. "/icons/" .. name .. ".svg"
+end
+
+--- ZenOS' full-screen list: title bar with a back arrow and an action button, rows
+-- with an icon and a detail line. nil without ZenOS, and callers fall back to dialogs.
+local function zenPicker()
+    local ok, picker = pcall(require, "common/ui/zen_menu_picker")
+    return ok and type(picker) == "function" and picker or nil
+end
+
+--- What the Home widget opens: the books in the download folder, with Settings behind
+-- the gear in the title bar.
 function Bellasekai:showLibraryDialog()
+    local picker = zenPicker()
+    if not picker then
+        return self:showLibraryButtons()
+    end
+    local items = {}
+    for _i, book in ipairs(self:localBooks()) do
+        local entry, detail = self:bookStatus(book)
+        table.insert(items, {
+            text = book.title,
+            secondary_text = detail,
+            image_file = self:icon(entry.icon),
+            file = book.file,
+        })
+    end
+    if #items == 0 then
+        table.insert(items, {
+            text = self:isConfigured() and _("No books yet") or _("Not set up"),
+            secondary_text = _("Tap the gear to open Settings and sync"),
+            image_file = self:icon("library"),
+            keep_open = true,
+        })
+    end
+    picker{
+        title = BRAND,
+        items = items,
+        title_action_icon = self:icon("settings"),
+        title_action_callback = function() self:showSettingsDialog() end,
+        on_select = function(item)
+            if item.file then self:openBook(item.file) end
+        end,
+    }
+end
+
+--- Settings rows, shared by the ZenOS page and the fallback dialog.
+function Bellasekai:settingsEntries()
+    local configured = self:isConfigured() and true or false
+    local last = self.settings:readSetting("last_sync")
+    local server = self:getServer()
+    return {
+        {
+            icon = "refresh-cw", glyph = ICONS.sync,
+            text = _("Sync library"),
+            detail = last and T(_("Last sync %1"), os.date("%H:%M %d/%m", last.time)) or _("Never synced"),
+            enabled = configured,
+            action = function() self:startSync() end,
+        },
+        {
+            icon = "user", glyph = ICONS.account,
+            text = _("Server and account"),
+            detail = configured
+                and (self.settings:readSetting("username") .. " · " .. server:gsub("^https?://", ""))
+                or _("Not set up"),
+            action = function() self:showAccountDialog() end,
+        },
+        {
+            icon = "folder", glyph = ICONS.folder,
+            text = _("Download folder"),
+            detail = self:getDownloadDir(),
+            action = function()
+                self:chooseDownloadDir(nil, function() self:showSettingsDialog() end)
+            end,
+        },
+        {
+            icon = "trash", glyph = ICONS.delete,
+            text = _("Delete books removed from the collection"),
+            detail = self.settings:nilOrTrue("delete_removed") and _("On") or _("Off"),
+            action = function()
+                self.settings:flipNilOrTrue("delete_removed")
+                self.settings:flush()
+                self:showSettingsDialog()
+            end,
+        },
+        {
+            icon = "cloud", glyph = ICONS.connect,
+            text = _("Apply to Progress sync"),
+            detail = configured and (server .. "/api/kosync") or _("Set up the account first"),
+            enabled = configured,
+            action = function() self:applyToKosync() end,
+        },
+    }
+end
+
+function Bellasekai:runSettingsEntry(entry)
+    if entry.enabled == false then
+        UIManager:show(InfoMessage:new{ text = _("Set up the server and account first."), timeout = 3 })
+        return
+    end
+    entry.action()
+end
+
+function Bellasekai:showSettingsDialog()
+    local entries = self:settingsEntries()
+    local picker = zenPicker()
+    if not picker then
+        return self:showSettingsButtons(entries)
+    end
+    local items = {}
+    for _i, entry in ipairs(entries) do
+        table.insert(items, {
+            text = entry.text,
+            secondary_text = entry.detail,
+            image_file = self:icon(entry.icon),
+            entry = entry,
+        })
+    end
+    picker{
+        title = T(_("%1 · Settings"), BRAND),
+        items = items,
+        on_select = function(item) self:runSettingsEntry(item.entry) end,
+        -- Back (no item) returns to the book list; picking a row runs it instead.
+        on_close = function(item)
+            if not item then self:showLibraryDialog() end
+        end,
+    }
+end
+
+--- Fallback without ZenOS: the same content as plain dialogs with inline glyphs.
+function Bellasekai:showLibraryButtons()
     local dialog
     local buttons = {}
     local books = self:localBooks()
     for _i, book in ipairs(books) do
+        local entry, detail = self:bookStatus(book)
         table.insert(buttons, {{
-            text = self:bookRowText(book),
+            text = entry.glyph .. "  " .. book.title .. "  ·  " .. detail,
             align = "left",
             callback = function()
                 UIManager:close(dialog)
@@ -250,9 +385,7 @@ function Bellasekai:showLibraryDialog()
     end
     if #books == 0 then
         table.insert(buttons, {{
-            text = ICONS.unread .. "  " .. (self:isConfigured()
-                and _("No books yet · sync from Settings")
-                or _("Not set up · open Settings")),
+            text = ICONS.unread .. "  " .. _("No books yet"),
             align = "left",
             enabled = false,
         }})
@@ -274,41 +407,23 @@ function Bellasekai:showLibraryDialog()
     UIManager:show(dialog)
 end
 
-function Bellasekai:showSettingsDialog()
+function Bellasekai:showSettingsButtons(entries)
     local dialog
-    local configured = self:isConfigured() and true or false
-    local function row(icon, text, callback, enabled)
-        return {{
-            text = icon .. "  " .. text,
+    local buttons = {}
+    for _i, entry in ipairs(entries) do
+        table.insert(buttons, {{
+            text = entry.glyph .. "  " .. entry.text .. "  ·  " .. entry.detail,
             align = "left",
-            enabled = enabled ~= false,
             callback = function()
                 UIManager:close(dialog)
-                callback()
+                self:runSettingsEntry(entry)
             end,
-        }}
-    end
-    local _dir_path, dir_name = util.splitFilePathName(self:getDownloadDir())
-    local delete_label = _("Delete books removed from the collection")
-    if self.settings:nilOrTrue("delete_removed") then
-        delete_label = delete_label .. "  " .. ICONS.check
+        }})
     end
     dialog = ButtonDialog:new{
         title = T(_("%1 · Settings"), BRAND),
         title_align = "left",
-        buttons = {
-            row(ICONS.sync, _("Sync library"), function() self:startSync() end, configured),
-            row(ICONS.account, _("Server and account"), function() self:showAccountDialog() end),
-            row(ICONS.folder, T(_("Download folder: %1"), dir_name), function()
-                self:chooseDownloadDir(nil, function() self:showSettingsDialog() end)
-            end),
-            row(ICONS.delete, delete_label, function()
-                self.settings:flipNilOrTrue("delete_removed")
-                self.settings:flush()
-                self:showSettingsDialog()
-            end),
-            row(ICONS.connect, _("Apply to Progress sync"), function() self:applyToKosync() end, configured),
-        },
+        buttons = buttons,
     }
     UIManager:show(dialog)
 end
