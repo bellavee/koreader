@@ -55,7 +55,7 @@ local KOSYNC_CHECKSUM_FILENAME = 1
 local BRAND = "Bindery"
 
 -- Material Design glyphs from the Nerd Font symbols, used by the fallback dialogs when
--- ZenOS (and its full-size SVG rows) is not installed.
+-- ZenOS is not installed.
 local ICONS = {
     settings = "\u{F0493}",
     sync     = "\u{F04E6}",
@@ -131,10 +131,10 @@ function Bellasekai:localBooks()
 end
 
 local BOOK_STATUS = {
-    new       = { icon = "book",         glyph = ICONS.unread,   label = _("Unread") },
-    reading   = { icon = "book-open",    glyph = ICONS.reading,  label = _("Reading") },
-    complete  = { icon = "circle-check", glyph = ICONS.finished, label = _("Finished") },
-    abandoned = { icon = "circle-pause", glyph = ICONS.on_hold,  label = _("On hold") },
+    new       = { glyph = ICONS.unread,   label = _("Unread") },
+    reading   = { glyph = ICONS.reading,  label = _("Reading") },
+    complete  = { glyph = ICONS.finished, label = _("Finished") },
+    abandoned = { glyph = ICONS.on_hold,  label = _("On hold") },
 }
 
 --- Read status of a book, as an icon and a "Reading · 42%" line.
@@ -153,10 +153,8 @@ function Bellasekai:openBook(file)
     require("apps/reader/readerui"):showReader(file)
 end
 
---- Icon shipped with the plugin (Lucide, ISC licence — see icons/LICENSE).
-function Bellasekai:icon(name)
-    return self.path .. "/icons/" .. name .. ".svg"
-end
+--- KOReader's own gear: plugin SVGs with fill="none" rendered as solid black on device.
+local SETTINGS_ICON = "resources/icons/mdlight/appbar.settings.svg"
 
 --- ZenOS' full-screen list: title bar with a back arrow and an action button, rows
 -- with an icon and a detail line. nil without ZenOS, and callers fall back to dialogs.
@@ -176,7 +174,6 @@ function Bellasekai:showLibraryDialog()
     local items = {{
         text = self:syncedText(),
         secondary_text = configured and _("Tap to sync now") or _("Set up the account in Settings"),
-        image_file = self:icon("refresh-cw"),
         sync = true,
     }}
     for _i, book in ipairs(self:localBooks()) do
@@ -184,7 +181,6 @@ function Bellasekai:showLibraryDialog()
         table.insert(items, {
             text = book.title,
             secondary_text = detail,
-            image_file = self:icon(entry.icon),
             file = book.file,
         })
     end
@@ -192,14 +188,13 @@ function Bellasekai:showLibraryDialog()
         table.insert(items, {
             text = configured and _("No books yet") or _("Not set up"),
             secondary_text = _("Tap the gear to open Settings and sync"),
-            image_file = self:icon("library"),
             keep_open = true,
         })
     end
     picker{
         title = BRAND,
         items = items,
-        title_action_icon = self:icon("settings"),
+        title_action_icon = SETTINGS_ICON,
         title_action_callback = function() self:showSettingsDialog() end,
         on_select = function(item)
             if item.sync then
@@ -218,14 +213,14 @@ function Bellasekai:settingsEntries()
     local server = self:getServer()
     return {
         {
-            icon = "refresh-cw", glyph = ICONS.sync,
+            glyph = ICONS.sync,
             text = _("Sync library"),
             detail = last and T(_("Last sync %1"), os.date("%H:%M %d/%m", last.time)) or _("Never synced"),
             enabled = configured,
             action = function() self:startSync() end,
         },
         {
-            icon = "user", glyph = ICONS.account,
+            glyph = ICONS.account,
             text = _("Server and account"),
             detail = configured
                 and (self.settings:readSetting("username") .. " · " .. server:gsub("^https?://", ""))
@@ -233,7 +228,7 @@ function Bellasekai:settingsEntries()
             action = function() self:showAccountDialog() end,
         },
         {
-            icon = "folder", glyph = ICONS.folder,
+            glyph = ICONS.folder,
             text = _("Download folder"),
             detail = self:getDownloadDir(),
             action = function()
@@ -241,7 +236,7 @@ function Bellasekai:settingsEntries()
             end,
         },
         {
-            icon = "trash", glyph = ICONS.delete,
+            glyph = ICONS.delete,
             text = _("Delete books removed from the collection"),
             detail = self.settings:nilOrTrue("delete_removed") and _("On") or _("Off"),
             action = function()
@@ -251,7 +246,7 @@ function Bellasekai:settingsEntries()
             end,
         },
         {
-            icon = "cloud", glyph = ICONS.connect,
+            glyph = ICONS.connect,
             text = _("Apply to Progress sync"),
             detail = configured and (server .. "/api/kosync") or _("Set up the account first"),
             enabled = configured,
@@ -279,7 +274,6 @@ function Bellasekai:showSettingsDialog()
         table.insert(items, {
             text = entry.text,
             secondary_text = entry.detail,
-            image_file = self:icon(entry.icon),
             entry = entry,
         })
     end
