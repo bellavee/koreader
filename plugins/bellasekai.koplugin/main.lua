@@ -380,45 +380,13 @@ function Bellasekai:isConfigured()
     return self:getServer() and self.settings:readSetting("username") and self.settings:readSetting("userkey")
 end
 
+--- Tools > Bindery (and a ZenOS "Plugin Menu" tab, which reuses this entry) opens the
+-- same book list as the action; every setting lives behind its gear.
 function Bellasekai:addToMainMenu(menu_items)
     menu_items.bellasekai = {
         text = BRAND,
         sorting_hint = "tools",
-        sub_item_table = {
-            {
-                text = _("Sync library"),
-                enabled_func = function() return self:isConfigured() and true or false end,
-                callback = function() self:startSync() end,
-            },
-            {
-                text = _("Server and account"),
-                keep_menu_open = true,
-                callback = function() self:showAccountDialog() end,
-            },
-            {
-                text_func = function()
-                    return T(_("Download folder: %1"), self:getDownloadDir())
-                end,
-                keep_menu_open = true,
-                callback = function(touchmenu_instance)
-                    self:chooseDownloadDir(touchmenu_instance)
-                end,
-            },
-            {
-                text = _("Delete books removed from the collection"),
-                checked_func = function() return self.settings:nilOrTrue("delete_removed") end,
-                callback = function()
-                    self.settings:flipNilOrTrue("delete_removed")
-                end,
-            },
-            {
-                text = _("Apply to Progress sync"),
-                enabled_func = function() return self:isConfigured() and true or false end,
-                keep_menu_open = true,
-                callback = function() self:applyToKosync() end,
-                separator = true,
-            },
-        },
+        callback = function() self:showLibraryDialog() end,
     }
 end
 
