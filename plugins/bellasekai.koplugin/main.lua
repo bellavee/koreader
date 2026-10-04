@@ -1,5 +1,9 @@
 --[[--
-Mirrors a bellasekai book collection onto the device.
+Bindery: mirrors a bellasekai book collection onto the device.
+
+Shown to the user as "Bindery" (the name of the books section on the site); the plugin
+id, settings file and EPUB file names keep "bellasekai" so existing installs and the
+server-side progress matching keep working.
 
 The server lists the books of the collection assigned to this device, each with a
 `version` that changes whenever the generated EPUB would change (new chapter, new
@@ -37,6 +41,7 @@ local MultiInputDialog = require("ui/widget/multiinputdialog")
 local NetworkMgr = require("ui/network/manager")
 local PathChooser = require("ui/widget/pathchooser")
 local PluginLoader = require("pluginloader")
+local ReadCollection = require("readcollection")
 local ReadHistory = require("readhistory")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
@@ -60,6 +65,31 @@ local KOSYNC_CHECKSUM_FILENAME = 1
 
 -- Id of the ZenOS Home widget; ZenOS stores layout and enabled state under it.
 local ZEN_WIDGET_ID = "bellasekai.library"
+
+local BRAND = "Bindery"
+
+-- Material Design glyphs from the Nerd Font symbols, as used by ZenOS menus. KOReader
+-- ships the same font as a UI fallback, so they render without ZenOS too.
+local ICONS = {
+    settings = "\u{F0493}",
+    sync     = "\u{F04E6}",
+    account  = "\u{F0013}",
+    folder   = "\u{F0256}",
+    delete   = "\u{F0156}",
+    connect  = "\u{F0337}",
+    unread   = "\u{F00BA}",
+    reading  = "\u{F14F7}",
+    finished = "\u{F012C}",
+    on_hold  = "\u{F03E4}",
+    check    = "\u{2713}",
+}
+
+local STATUS_ICONS = {
+    new = ICONS.unread,
+    reading = ICONS.reading,
+    complete = ICONS.finished,
+    abandoned = ICONS.on_hold,
+}
 
 local Bellasekai = WidgetContainer:extend{
     name = "bellasekai",
@@ -91,7 +121,7 @@ function Bellasekai:registerZenWidget()
     local register = rawget(_G, "__ZENOS_REGISTER_HOME_ITEM")
     if type(register) ~= "function" then return end
     register(ZEN_WIDGET_ID, function(ctx) return self:buildZenWidget(ctx) end, {
-        label = _("Bellasekai"),
+        label = BRAND,
         size = "xs",
     })
 end
@@ -120,11 +150,7 @@ function Bellasekai:buildZenWidget(ctx)
     local width, height = ctx.width, ctx.height
     local pad = Size.padding.large
     local inner_w = math.max(1, width - 2 * pad)
-    local last = self.settings:readSetting("last_sync")
-    local title = "Bellasekai"
-    if last and last.collection then
-        title = title .. " · " .. last.collection
-    end
+    local title = BRAND
 
     local text = VerticalGroup:new{
         align = "left",
@@ -167,13 +193,13 @@ function Bellasekai:buildZenWidget(ctx)
             return false
         end
         if ctx.openTopMenu and ctx.openTopMenu(ges) then return true end
-        self:showZenActions()
+        self:showLibraryDialog()
         return true
     end
     if type(ctx.setWidgetActions) == "function" then
         ctx.setWidgetActions{
             activate = function()
-                self:showZenActions()
+                self:showLibraryDialog()
                 return true
             end,
         }
@@ -181,29 +207,107 @@ function Bellasekai:buildZenWidget(ctx)
     return tap
 end
 
-function Bellasekai:showZenActions()
-    if not self:isConfigured() then
-        self:showAccountDialog()
-        return
+--- Books of the collection that are on the device, alphabetically.
+function Bellasekai:localBooks()
+    local books = {}
+    for id, known in pairs(self.settings:readSetting("books") or {}) do
+        if known.file and lfs.attributes(known.file, "mode") == "file" then
+            table.insert(books, { id = id, file = known.file, title = known.title or id })
+        end
     end
+    table.sort(books, function(a, b) return a.title < b.title end)
+    return books
+end
+
+function Bellasekai:bookRowText(book)
+    local info = BookList.getBookInfo(book.file)
+    local status = info.been_opened and info.status or "new"
+    local text = (STATUS_ICONS[status] or ICONS.unread) .. "  " .. book.title
+    if status ~= "complete" and info.percent_finished then
+        text = text .. "  ·  " .. math.floor(info.percent_finished * 100) .. "%"
+    end
+    return text
+end
+
+function Bellasekai:openBook(file)
+    require("apps/reader/readerui"):showReader(file)
+end
+
+--- What the Home widget opens: the books in the download folder, then Settings.
+function Bellasekai:showLibraryDialog()
     local dialog
+    local buttons = {}
+    local books = self:localBooks()
+    for _i, book in ipairs(books) do
+        table.insert(buttons, {{
+            text = self:bookRowText(book),
+            align = "left",
+            callback = function()
+                UIManager:close(dialog)
+                self:openBook(book.file)
+            end,
+        }})
+    end
+    if #books == 0 then
+        table.insert(buttons, {{
+            text = ICONS.unread .. "  " .. (self:isConfigured()
+                and _("No books yet · sync from Settings")
+                or _("Not set up · open Settings")),
+            align = "left",
+            enabled = false,
+        }})
+    end
+    table.insert(buttons, {{
+        text = ICONS.settings .. "  " .. _("Settings"),
+        align = "left",
+        callback = function()
+            UIManager:close(dialog)
+            self:showSettingsDialog()
+        end,
+    }})
     dialog = ButtonDialog:new{
-        title = "Bellasekai",
+        title = BRAND,
+        title_align = "left",
+        buttons = buttons,
+        rows_per_page = #buttons > 10 and 10 or nil,
+    }
+    UIManager:show(dialog)
+end
+
+function Bellasekai:showSettingsDialog()
+    local dialog
+    local configured = self:isConfigured() and true or false
+    local function row(icon, text, callback, enabled)
+        return {{
+            text = icon .. "  " .. text,
+            align = "left",
+            enabled = enabled ~= false,
+            callback = function()
+                UIManager:close(dialog)
+                callback()
+            end,
+        }}
+    end
+    local _dir_path, dir_name = util.splitFilePathName(self:getDownloadDir())
+    local delete_label = _("Delete books removed from the collection")
+    if self.settings:nilOrTrue("delete_removed") then
+        delete_label = delete_label .. "  " .. ICONS.check
+    end
+    dialog = ButtonDialog:new{
+        title = T(_("%1 · Settings"), BRAND),
+        title_align = "left",
         buttons = {
-            {{
-                text = _("Sync library"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self:startSync()
-                end,
-            }},
-            {{
-                text = _("Server and account"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self:showAccountDialog()
-                end,
-            }},
+            row(ICONS.sync, _("Sync library"), function() self:startSync() end, configured),
+            row(ICONS.account, _("Server and account"), function() self:showAccountDialog() end),
+            row(ICONS.folder, T(_("Download folder: %1"), dir_name), function()
+                self:chooseDownloadDir(nil, function() self:showSettingsDialog() end)
+            end),
+            row(ICONS.delete, delete_label, function()
+                self.settings:flipNilOrTrue("delete_removed")
+                self.settings:flush()
+                self:showSettingsDialog()
+            end),
+            row(ICONS.connect, _("Apply to Progress sync"), function() self:applyToKosync() end, configured),
         },
     }
     UIManager:show(dialog)
@@ -220,7 +324,7 @@ end
 
 function Bellasekai:getDownloadDir()
     return self.settings:readSetting("download_dir")
-        or (G_reader_settings:readSetting("home_dir") or Device.home_dir or DataStorage:getDataDir()) .. "/Bellasekai"
+        or (G_reader_settings:readSetting("home_dir") or Device.home_dir or DataStorage:getDataDir()) .. "/" .. BRAND
 end
 
 function Bellasekai:isConfigured()
@@ -229,7 +333,7 @@ end
 
 function Bellasekai:addToMainMenu(menu_items)
     menu_items.bellasekai = {
-        text = _("Bellasekai"),
+        text = BRAND,
         sorting_hint = "tools",
         sub_item_table = {
             {
@@ -272,7 +376,7 @@ end
 function Bellasekai:showAccountDialog()
     local dialog
     dialog = MultiInputDialog:new{
-        title = _("Bellasekai server"),
+        title = T(_("%1 server"), BRAND),
         fields = {
             {
                 text = self:getServer() or "https://",
@@ -322,7 +426,7 @@ function Bellasekai:showAccountDialog()
     dialog:onShowKeyboard()
 end
 
-function Bellasekai:chooseDownloadDir(touchmenu_instance)
+function Bellasekai:chooseDownloadDir(touchmenu_instance, on_done)
     local current = self:getDownloadDir()
     local start = lfs.attributes(current, "mode") == "directory" and current
         or G_reader_settings:readSetting("home_dir") or Device.home_dir or "/"
@@ -334,6 +438,7 @@ function Bellasekai:chooseDownloadDir(touchmenu_instance)
             self.settings:saveSetting("download_dir", path)
             self.settings:flush()
             if touchmenu_instance and touchmenu_instance.updateItems then touchmenu_instance:updateItems() end
+            if on_done then on_done() end
         end,
     })
 end
@@ -406,7 +511,7 @@ function Bellasekai:testLogin()
     NetworkMgr:runWhenOnline(function()
         local code, body = self:request("/api/kosync/users/auth")
         if code == 200 then
-            UIManager:show(InfoMessage:new{ text = _("Logged in to bellasekai."), timeout = 3 })
+            UIManager:show(InfoMessage:new{ text = T(_("Logged in to %1."), BRAND), timeout = 3 })
         else
             UIManager:show(InfoMessage:new{ text = T(_("Login failed: %1"), errorText(code, body)) })
         end
@@ -454,6 +559,16 @@ function Bellasekai:currentDocument()
     return reader and reader.document and reader.document.file
 end
 
+--- Moves a book with everything KOReader keeps about it, as the file manager does.
+local function moveBook(file, dest)
+    if not os.rename(file, dest) then return false end
+    BookList.resetBookInfoCache(file)
+    DocSettings.updateLocation(file, dest)
+    ReadHistory:updateItem(file, dest)
+    ReadCollection:updateItem(file, dest)
+    return true
+end
+
 local function removeBook(file)
     if not os.remove(file) then return false end
     BookList.resetBookInfoCache(file)
@@ -480,13 +595,26 @@ function Bellasekai:sync()
 
     local state = self.settings:readSetting("books", {})
     local open_file = self:currentDocument()
-    local stats = { added = 0, updated = 0, removed = 0, busy = 0, failed = {} }
+    local stats = { added = 0, updated = 0, removed = 0, moved = 0, busy = 0, failed = {} }
     local wanted = {}
+    local old_dirs = {}
 
     for i, book in ipairs(library.books) do
         wanted[book.id] = true
         local path = dir .. "/" .. book.filename
         local known = state[book.id]
+        -- Download folder changed (e.g. the Bellasekai -> Bindery rename): move the book
+        -- instead of downloading it again, so its reading position comes along.
+        if known and known.file and known.file ~= path and known.file ~= open_file
+                and lfs.attributes(known.file, "mode") == "file"
+                and lfs.attributes(path, "mode") == nil then
+            local old_dir = util.splitFilePathName(known.file)
+            if moveBook(known.file, path) then
+                old_dirs[old_dir] = true
+                known.file = path
+                stats.moved = stats.moved + 1
+            end
+        end
         local exists = lfs.attributes(path, "mode") == "file"
         if not exists or not known or known.version ~= book.version or known.file ~= path then
             if path == open_file then
@@ -534,6 +662,10 @@ function Bellasekai:sync()
         end
     end
 
+    for old_dir in pairs(old_dirs) do
+        lfs.rmdir(old_dir) -- only succeeds once nothing is left in it
+    end
+
     self.settings:saveSetting("books", state)
     self.settings:saveSetting("last_sync", {
         time = os.time(),
@@ -552,6 +684,9 @@ function Bellasekai:sync()
         T(_("Collection: %1 · %2 books"), library.collection and library.collection.name or "?", #library.books),
         T(_("New: %1 · Updated: %2 · Removed: %3"), stats.added, stats.updated, stats.removed),
     }
+    if stats.moved > 0 then
+        table.insert(lines, T(_("Moved %1 to %2"), stats.moved, dir))
+    end
     if stats.busy > 0 then
         table.insert(lines, T(_("Skipped %1 (open in the reader, sync again after closing it)"), stats.busy))
     end
