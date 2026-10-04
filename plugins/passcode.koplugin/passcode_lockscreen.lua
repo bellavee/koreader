@@ -1,7 +1,7 @@
 --[[--
 Full-screen passcode screen modelled on the stock Kobo one: a serif prompt that turns into
-PIN dots and a backspace key once typing starts, a thin rule, a compact 3×3 grid of
-digits with a hairline under each key, 0 alone on the last row, and a "forgot your PIN"
+PIN dots and a backspace key once typing starts, a compact 3×3 grid of digits with one
+continuous rule under the header and each row, 0 alone on the last row, and a "forgot your PIN"
 line at the bottom.
 
 Everything is painted by hand in `paintTo` and taps are hit-tested against the keys, so
@@ -153,7 +153,7 @@ function LockScreen:paintTo(bb, x, y)
     end
     bb:paintRect(gx, gy + header_h - line, grid_w, line, rule)
 
-    -- Digits: three rows with a hairline under each key, then 0 alone (and Huỷ).
+    -- Digits: three rows, then 0 alone (and Huỷ).
     local labels = { "1", "2", "3", "4", "5", "6", "7", "8", "9", self.on_cancel and "Huỷ" or "", "0", "" }
     for i, label in ipairs(labels) do
         local col, row = (i - 1) % 3, math.floor((i - 1) / 3)
@@ -171,9 +171,10 @@ function LockScreen:paintTo(bb, x, y)
             }, kx + math.floor(cell_w / 2), ky + math.floor(cell_h / 2))
             table.insert(self.keys, { label = label, x = kx, y = ky, w = cell_w, h = cell_h })
         end
-        if row < 3 then
-            bb:paintRect(kx, ky + cell_h - line, cell_w, line, rule)
-        end
+    end
+    -- One continuous rule under each of the first three rows, same width as the header's.
+    for row = 1, 3 do
+        bb:paintRect(gx, gy + header_h + row * cell_h - line, grid_w, line, rule)
     end
 
     if self.on_forgot then
