@@ -86,14 +86,19 @@ end
 function Passcode.lock()
     if state.screen or not isEnabled() then return end
     state.screen = LockScreen:new{
-        title = "Nhập mã PIN",
+        title = "Vui lòng nhập mã PIN 4 số.",
         length = PIN_LENGTH,
         on_complete = function(pin)
             if checkPin(pin) then
                 state.screen = nil
                 return true
             end
-            return "Sai mã PIN"
+            return "Sai mã PIN. Vui lòng thử lại."
+        end,
+        on_forgot = function()
+            UIManager:show(InfoMessage:new{
+                text = "Cắm máy vào máy tính, mở .adds/koreader/settings.reader.lua và xoá mục \"passcode\". Mở lại KOReader là hết khoá.",
+            })
         end,
     }
     UIManager:show(state.screen)
@@ -127,7 +132,6 @@ local function askPin(title, step, on_cancel)
     UIManager:show(LockScreen:new{
         title = title,
         length = PIN_LENGTH,
-        show_clock = false,
         on_complete = step,
         on_cancel = on_cancel or function() end,
     })
@@ -135,10 +139,10 @@ end
 
 --- New PIN twice, then `done(pin)`.
 local function chooseNewPin(done)
-    askPin("Mã PIN mới", function(first)
+    askPin("Nhập mã PIN mới gồm 4 số.", function(first)
         UIManager:nextTick(function()
-            askPin("Nhập lại mã PIN mới", function(second)
-                if second ~= first then return "Hai mã không khớp" end
+            askPin("Nhập lại mã PIN mới.", function(second)
+                if second ~= first then return "Hai mã không khớp. Vui lòng thử lại." end
                 done(second)
                 return true
             end)
@@ -149,8 +153,8 @@ end
 
 --- Runs `action` after the current PIN is confirmed.
 local function withCurrentPin(action)
-    askPin("Nhập mã PIN hiện tại", function(pin)
-        if not checkPin(pin) then return "Sai mã PIN" end
+    askPin("Vui lòng nhập mã PIN hiện tại.", function(pin)
+        if not checkPin(pin) then return "Sai mã PIN. Vui lòng thử lại." end
         UIManager:nextTick(action)
         return true
     end)
