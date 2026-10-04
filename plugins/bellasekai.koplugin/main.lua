@@ -180,7 +180,7 @@ function Bellasekai:chooseDownloadDir(touchmenu_instance)
         onConfirm = function(path)
             self.settings:saveSetting("download_dir", path)
             self.settings:flush()
-            if touchmenu_instance then touchmenu_instance:updateItems() end
+            if touchmenu_instance and touchmenu_instance.updateItems then touchmenu_instance:updateItems() end
         end,
     })
 end
