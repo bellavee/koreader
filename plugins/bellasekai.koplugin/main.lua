@@ -478,7 +478,7 @@ function Bellasekai:request(path, filepath)
         url = self:getServer() .. path,
         method = "GET",
         headers = {
-            ["Accept"] = filepath and "application/epub+zip" or "application/json",
+            ["Accept"] = filepath and "*/*" or "application/json",
             ["Accept-Encoding"] = "identity",
             ["x-auth-user"] = self.settings:readSetting("username"),
             ["x-auth-key"] = self.settings:readSetting("userkey"),
@@ -613,7 +613,10 @@ function Bellasekai:sync()
 
     for i, book in ipairs(library.books) do
         wanted[book.id] = true
-        local path = dir .. "/" .. book.filename
+        -- Documents (PDF, sheet music…) go to a subfolder per category; books stay at the top.
+        local book_dir = book.folder and (dir .. "/" .. book.folder) or dir
+        if book_dir ~= dir then util.makePath(book_dir) end
+        local path = book_dir .. "/" .. book.filename
         local known = state[book.id]
         -- Download folder changed (e.g. the Bellasekai -> Bindery rename): move the book
         -- instead of downloading it again, so its reading position comes along.
@@ -636,7 +639,7 @@ function Bellasekai:sync()
                     break
                 end
                 local part = path .. ".part"
-                local dl_code, err, headers = self:request("/api/koreader/books/" .. book.id, part)
+                local dl_code, err, headers = self:request(book.download or ("/api/koreader/books/" .. book.id), part)
                 if dl_code == 200 and lfs.attributes(part, "size") and lfs.attributes(part, "size") > 0
                         and os.rename(part, path) then
                     BookList.resetBookInfoCache(path)
@@ -665,7 +668,9 @@ function Bellasekai:sync()
                 if known.file == open_file then
                     stats.busy = stats.busy + 1
                 else
+                    local removed_dir = util.splitFilePathName(known.file)
                     if lfs.attributes(known.file, "mode") ~= "file" or removeBook(known.file) then
+                        if removed_dir ~= dir .. "/" then old_dirs[removed_dir] = true end
                         state[id] = nil
                         stats.removed = stats.removed + 1
                     end
@@ -692,7 +697,8 @@ function Bellasekai:sync()
     end
 
     local lines = {
-        T(_("Collection: %1 · %2 books"), library.collection and library.collection.name or "?", #library.books),
+        library.collection and T(_("Collection: %1 · %2 items"), library.collection.name, #library.books)
+            or T(_("%1 items"), #library.books),
         T(_("New: %1 · Updated: %2 · Removed: %3"), stats.added, stats.updated, stats.removed),
     }
     if stats.moved > 0 then
