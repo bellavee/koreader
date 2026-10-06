@@ -94,6 +94,7 @@ function Bellasekai:init()
     self.ui.menu:registerToMainMenu(self)
     self:onDispatcherRegisterActions()
     self:addHighlightButtons()
+    self:addDictButtons()
 end
 
 --- "Bindery" as a dispatcher action: a ZenOS Navbar tab (Add > Action), a gesture or a

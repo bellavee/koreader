@@ -154,6 +154,61 @@ function Tools:addHighlightButtons()
     button("12_bindery_3_flag", "Flag", function(selection) self:showFlagDialog(selection) end)
 end
 
+--- The same three actions in the dictionary popup, which is what a long-press on a single
+-- word opens (the highlight menu only appears for a multi-word selection).
+function Tools:dictActions()
+    return {
+        { id = "bindery_1_lens", text = "Lens", run = function(selection) self:runAssist("lens", selection) end },
+        { id = "bindery_2_annotate", text = "Annotate", run = function(selection) self:runAssist("annotate", selection) end },
+        { id = "bindery_3_flag", text = "Flag", run = function(selection) self:showFlagDialog(selection) end },
+    }
+end
+
+local function selectionFromPopup(popup)
+    local selection = popup.highlight and captureSelection(popup.highlight)
+    if selection then return selection end
+    local word = popup.word or popup.lookupword
+    if not word or word == "" then return nil end
+    return { text = word, context = word }
+end
+
+function Tools:addDictButtons()
+    local dictionary = self.ui.dictionary
+    if not (dictionary and dictionary.addToDictButtons) then return end
+    for _i, action in ipairs(self:dictActions()) do
+        dictionary:addToDictButtons({
+            id = action.id,
+            text = action.text,
+            conditional = true,
+            row_group = "bindery",
+            show_func = function(popup) return not popup.is_wiki end,
+            callback = function(popup)
+                local selection = selectionFromPopup(popup)
+                popup:onClose()
+                if selection then action.run(selection) end
+            end,
+        })
+    end
+end
+
+--- Older KOReader without addToDictButtons: append the row when the popup builds.
+function Tools:onDictButtonsReady(popup, buttons)
+    if (self.ui.dictionary and self.ui.dictionary.addToDictButtons) or popup.is_wiki then return end
+    local row = {}
+    for _i, action in ipairs(self:dictActions()) do
+        table.insert(row, {
+            id = action.id,
+            text = action.text,
+            callback = function()
+                local selection = selectionFromPopup(popup)
+                popup:onClose()
+                if selection then action.run(selection) end
+            end,
+        })
+    end
+    table.insert(buttons, row)
+end
+
 function Tools:runAssist(mode, selection)
     if not self:isConfigured() then
         UIManager:show(InfoMessage:new{ text = _("Set up the server and account first."), timeout = 3 })
