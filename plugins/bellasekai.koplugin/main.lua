@@ -552,10 +552,13 @@ function Bellasekai:applyToKosync()
     settings.username = self.settings:readSetting("username")
     settings.userkey = self.settings:readSetting("userkey")
     settings.checksum_method = KOSYNC_CHECKSUM_FILENAME
+    -- Push on close/suspend and pull on open; without it nothing reaches the server
+    -- unless positions are pushed by hand.
+    settings.auto_sync = true
     settings_obj:saveSetting("settings", settings)
     settings_obj:flush()
     UIManager:show(InfoMessage:new{
-        text = T(_("Progress sync now uses %1, matching documents by file name.\n\nEnable automatic sync in Progress sync if you want positions pushed and pulled on their own."),
+        text = T(_("Progress sync now uses %1, matching documents by file name, with automatic sync on: positions are pushed when a book is closed or the device sleeps, and pulled when a book is opened."),
             settings.custom_server),
     })
 end
