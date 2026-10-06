@@ -26,6 +26,7 @@ local DataStorage = require("datastorage")
 local Device = require("device")
 local Dispatcher = require("dispatcher")
 local DocSettings = require("docsettings")
+local Event = require("ui/event")
 local FileManager = require("apps/filemanager/filemanager")
 local InfoMessage = require("ui/widget/infomessage")
 local JSON = require("json")
@@ -571,10 +572,33 @@ function Bellasekai:currentDocument()
     return reader and reader.document and reader.document.file
 end
 
+--- Forgets what is cached about a file's metadata and cover, like KOReader's and ZenOS'
+-- metadata editors do. A refreshed EPUB has no embedded cover, so the cover shown is drawn
+-- from the cached title; without this a renamed book keeps its old title on the cover.
+local function forgetCachedInfo(file)
+    BookList.resetBookInfoCache(file)
+    local ok, BookInfoManager = pcall(require, "bookinfomanager")
+    if ok and type(BookInfoManager) == "table" and BookInfoManager.deleteBookInfo then
+        pcall(BookInfoManager.deleteBookInfo, BookInfoManager, file)
+    end
+    UIManager:broadcastEvent(Event:new("InvalidateMetadataCache", file))
+end
+
+--- ZenOS keeps rendered covers in memory by path; drop them once after a sync changed files.
+local function clearCoverCaches()
+    for _i, name in ipairs({ "common/cover_render_cache", "common/cover_decode_cache" }) do
+        local ok, cache = pcall(require, name)
+        if ok and type(cache) == "table" and type(cache.clear) == "function" then
+            pcall(cache.clear, cache)
+        end
+    end
+    UIManager:broadcastEvent(Event:new("BookMetadataChanged"))
+end
+
 --- Moves a book with everything KOReader keeps about it, as the file manager does.
 local function moveBook(file, dest)
     if not os.rename(file, dest) then return false end
-    BookList.resetBookInfoCache(file)
+    forgetCachedInfo(file)
     DocSettings.updateLocation(file, dest)
     ReadHistory:updateItem(file, dest)
     ReadCollection:updateItem(file, dest)
@@ -583,7 +607,7 @@ end
 
 local function removeBook(file)
     if not os.remove(file) then return false end
-    BookList.resetBookInfoCache(file)
+    forgetCachedInfo(file)
     DocSettings.updateLocation(file) -- deletes the sidecar
     ReadHistory:fileDeleted(file)
     return true
@@ -642,7 +666,7 @@ function Bellasekai:sync()
                 local dl_code, err, headers = self:request(book.download or ("/api/koreader/books/" .. book.id), part)
                 if dl_code == 200 and lfs.attributes(part, "size") and lfs.attributes(part, "size") > 0
                         and os.rename(part, path) then
-                    BookList.resetBookInfoCache(path)
+                    forgetCachedInfo(path)
                     state[book.id] = {
                         file = path,
                         title = book.title,
@@ -681,6 +705,10 @@ function Bellasekai:sync()
 
     for old_dir in pairs(old_dirs) do
         lfs.rmdir(old_dir) -- only succeeds once nothing is left in it
+    end
+
+    if stats.added + stats.updated + stats.removed + stats.moved > 0 then
+        clearCoverCaches()
     end
 
     self.settings:saveSetting("books", state)
