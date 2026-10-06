@@ -237,11 +237,23 @@ function Tools:runAssist(mode, selection)
             UIManager:show(InfoMessage:new{ text = T(_("%1 failed: %2"), title, responseError(code, body)) })
             return
         end
-        UIManager:show(TextViewer:new{
+        local viewer
+        viewer = TextViewer:new{
             title = T("%1 · %2", title, language.label),
             text = body.text .. "\n\n— " .. selection.text,
             justified = false,
-        })
+            buttons_table = {{
+                {
+                    text = "Lưu vào sổ từ",
+                    callback = function() self:saveVocab(selection, body.text, language.key) end,
+                },
+                {
+                    text = _("Close"),
+                    callback = function() UIManager:close(viewer) end,
+                },
+            }},
+        }
+        UIManager:show(viewer)
     end)
 end
 

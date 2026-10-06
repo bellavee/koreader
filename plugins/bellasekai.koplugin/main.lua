@@ -78,9 +78,12 @@ local Bellasekai = WidgetContainer:extend{
     settings_file = DataStorage:getSettingsDir() .. "/bellasekai.lua",
 }
 
--- Lens / Annotate / Flag (highlight menu tools), kept in their own file.
-for name, fn in pairs(require("bindery_tools")) do
-    Bellasekai[name] = fn
+-- Lens / Annotate / Flag (highlight menu tools) and the study tools (recap, vocabulary
+-- review, highlight sync), kept in their own files.
+for _i, module in ipairs({ "bindery_tools", "bindery_study" }) do
+    for name, fn in pairs(require(module)) do
+        Bellasekai[name] = fn
+    end
 end
 
 function Bellasekai:init()
@@ -106,10 +109,32 @@ function Bellasekai:onDispatcherRegisterActions()
         title = BRAND,
         general = true,
     })
+    Dispatcher:registerAction("bindery_review_vocab", {
+        category = "none",
+        event = "BinderyReviewVocab",
+        title = BRAND .. ": ôn từ",
+        general = true,
+    })
+    Dispatcher:registerAction("bindery_recap", {
+        category = "none",
+        event = "BinderyRecap",
+        title = BRAND .. ": chuyện tới đâu rồi",
+        reader = true,
+    })
 end
 
 function Bellasekai:onBinderyShowLibrary()
     self:showLibraryDialog()
+    return true
+end
+
+function Bellasekai:onBinderyReviewVocab()
+    self:startVocabReview()
+    return true
+end
+
+function Bellasekai:onBinderyRecap()
+    self:showRecap()
     return true
 end
 
@@ -189,6 +214,18 @@ function Bellasekai:showLibraryDialog()
         secondary_text = configured and _("Tap to sync now") or _("Set up the account in Settings"),
         sync = true,
     }}
+    if self:currentBinderyPosition() then
+        table.insert(items, {
+            text = "Chuyện tới đâu rồi",
+            secondary_text = "Tóm tắt tới chỗ đang đọc, không spoil",
+            recap = true,
+        })
+    end
+    table.insert(items, {
+        text = "Ôn từ",
+        secondary_text = self:vocabDueText(),
+        review = true,
+    })
     for _i, book in ipairs(self:localBooks()) do
         local entry, detail = self:bookStatus(book)
         table.insert(items, {
@@ -197,7 +234,7 @@ function Bellasekai:showLibraryDialog()
             file = book.file,
         })
     end
-    if #items == 1 then
+    if #self:localBooks() == 0 then
         table.insert(items, {
             text = configured and _("No books yet") or _("Not set up"),
             secondary_text = _("Tap the gear to open Settings and sync"),
@@ -212,6 +249,10 @@ function Bellasekai:showLibraryDialog()
         on_select = function(item)
             if item.sync then
                 self:runSettingsEntry(self:settingsEntries()[1])
+            elseif item.recap then
+                self:showRecap()
+            elseif item.review then
+                self:startVocabReview()
             elseif item.file then
                 self:openBook(item.file)
             end
@@ -321,6 +362,24 @@ function Bellasekai:showLibraryButtons()
             self:runSettingsEntry(self:settingsEntries()[1])
         end,
     }}}
+    if self:currentBinderyPosition() then
+        table.insert(buttons, {{
+            text = ICONS.reading .. "  Chuyện tới đâu rồi",
+            align = "left",
+            callback = function()
+                UIManager:close(dialog)
+                self:showRecap()
+            end,
+        }})
+    end
+    table.insert(buttons, {{
+        text = ICONS.check .. "  Ôn từ  ·  " .. self:vocabDueText(),
+        align = "left",
+        callback = function()
+            UIManager:close(dialog)
+            self:startVocabReview()
+        end,
+    }})
     local books = self:localBooks()
     for _i, book in ipairs(books) do
         local entry, detail = self:bookStatus(book)
@@ -641,8 +700,13 @@ function Bellasekai:sync()
     local code, library = self:request("/api/koreader/library")
     -- Flags made offline go out with the sync.
     local flags_sent, flags_left = 0, 0
+    local highlights_sent, highlights_left = 0, 0
     if code == 200 then
         flags_sent, flags_left = self:flushIssues()
+        if not Trapper:info(_("Sending highlights…")) then return end
+        highlights_sent, highlights_left = self:flushHighlights(self.settings:readSetting("books"))
+        self:flushReviews()
+        self:refreshVocabDue()
     end
     if code ~= 200 or type(library) ~= "table" or type(library.books) ~= "table" then
         Trapper:clear()
@@ -762,6 +826,14 @@ function Bellasekai:sync()
     end
     if flags_sent > 0 or flags_left > 0 then
         table.insert(lines, T(_("Flags sent: %1 · waiting: %2"), flags_sent, flags_left))
+    end
+    if highlights_sent > 0 or highlights_left > 0 then
+        table.insert(lines, T("Highlight: gửi %1 sách%2", highlights_sent,
+            highlights_left > 0 and T(" · %1 chờ lần sau", highlights_left) or ""))
+    end
+    local due = self.settings:readSetting("vocab_due") or 0
+    if due > 0 then
+        table.insert(lines, T("Sổ từ vựng: %1 thẻ đến hạn ôn", due))
     end
     if stats.busy > 0 then
         table.insert(lines, T(_("Skipped %1 (open in the reader, sync again after closing it)"), stats.busy))
