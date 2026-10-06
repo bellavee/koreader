@@ -78,6 +78,11 @@ local Bellasekai = WidgetContainer:extend{
     settings_file = DataStorage:getSettingsDir() .. "/bellasekai.lua",
 }
 
+-- Lens / Annotate / Flag (highlight menu tools), kept in their own file.
+for name, fn in pairs(require("bindery_tools")) do
+    Bellasekai[name] = fn
+end
+
 function Bellasekai:init()
     -- One settings object for every instance: the file manager and the reader each get
     -- their own plugin instance, and separate copies would flush stale data over a sync
@@ -88,6 +93,7 @@ function Bellasekai:init()
     self.settings = Bellasekai.shared_settings
     self.ui.menu:registerToMainMenu(self)
     self:onDispatcherRegisterActions()
+    self:addHighlightButtons()
 end
 
 --- "Bindery" as a dispatcher action: a ZenOS Navbar tab (Add > Action), a gesture or a
@@ -115,6 +121,10 @@ function Bellasekai:syncedText()
     local text = T(_("Synced %1"), os.date("%H:%M %d/%m", last.time))
     if (last.failed or 0) > 0 then
         text = text .. " · " .. T(_("%1 failed"), last.failed)
+    end
+    local pending = #self:pendingIssues()
+    if pending > 0 then
+        text = text .. " · " .. T(_("%1 flags waiting"), pending)
     end
     return text
 end
@@ -244,6 +254,15 @@ function Bellasekai:settingsEntries()
             action = function()
                 self.settings:flipNilOrTrue("delete_removed")
                 self.settings:flush()
+                self:showSettingsDialog()
+            end,
+        },
+        {
+            glyph = ICONS.account,
+            text = _("Lens / Annotate language"),
+            detail = self:assistLanguage().label,
+            action = function()
+                self:cycleAssistLanguage()
                 self:showSettingsDialog()
             end,
         },
@@ -619,6 +638,11 @@ end
 function Bellasekai:sync()
     if not Trapper:info(_("Fetching library…")) then return end
     local code, library = self:request("/api/koreader/library")
+    -- Flags made offline go out with the sync.
+    local flags_sent, flags_left = 0, 0
+    if code == 200 then
+        flags_sent, flags_left = self:flushIssues()
+    end
     if code ~= 200 or type(library) ~= "table" or type(library.books) ~= "table" then
         Trapper:clear()
         UIManager:show(InfoMessage:new{ text = T(_("Cannot fetch the library: %1"), errorText(code, library)) })
@@ -734,6 +758,9 @@ function Bellasekai:sync()
     }
     if stats.moved > 0 then
         table.insert(lines, T(_("Moved %1 to %2"), stats.moved, dir))
+    end
+    if flags_sent > 0 or flags_left > 0 then
+        table.insert(lines, T(_("Flags sent: %1 · waiting: %2"), flags_sent, flags_left))
     end
     if stats.busy > 0 then
         table.insert(lines, T(_("Skipped %1 (open in the reader, sync again after closing it)"), stats.busy))
